@@ -53,21 +53,25 @@ func newTCPCmd() *cobra.Command {
 
 // parseTarget accepts a CIDR or a single IP, treated as a full-length prefix.
 func parseTarget(s string) (netip.Prefix, error) {
-	if prefix, err := netip.ParsePrefix(s); err == nil {
-		return prefix.Masked(), nil
-	}
-	addr, err := netip.ParseAddr(s)
+	prefix, err := netip.ParsePrefix(s)
 	if err != nil {
-		return netip.Prefix{}, fmt.Errorf("invalid target %q: expected CIDR or IP", s)
+		addr, addrErr := netip.ParseAddr(s)
+		if addrErr != nil {
+			return netip.Prefix{}, fmt.Errorf("invalid target %q: expected CIDR or IP", s)
+		}
+		prefix = netip.PrefixFrom(addr, addr.BitLen())
 	}
-	return netip.PrefixFrom(addr, addr.BitLen()), nil
+	if prefix.Addr().BitLen()-prefix.Bits() > 64 {
+		return netip.Prefix{}, fmt.Errorf("target %s is too large: at most 64 host bits are supported", s)
+	}
+	return prefix.Masked(), nil
 }
 
 func runTCP(ctx context.Context, out, errOut io.Writer, prefix netip.Prefix, opts tcpOptions) error {
 	addrs := make(chan netip.Addr)
 	go func() {
 		defer close(addrs)
-		for addr := prefix.Addr(); prefix.Contains(addr); addr = addr.Next() {
+		for addr := range shuffledAddrs(prefix) {
 			select {
 			case addrs <- addr:
 			case <-ctx.Done():
