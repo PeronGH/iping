@@ -107,9 +107,7 @@ func (s *scanStats) write(w io.Writer, label string, elapsed time.Duration, inte
 		status = " (interrupted)"
 	}
 	summary.Row("Elapsed", elapsed.Round(time.Millisecond).String()+status)
-	if saved != "" {
-		summary.Row("Saved", saved)
-	}
+	summary.Row("Saved", saved)
 
 	_, err := lipgloss.Fprintln(w, summary)
 	return err

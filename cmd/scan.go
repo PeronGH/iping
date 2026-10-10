@@ -15,12 +15,11 @@ import (
 )
 
 type scanOptions struct {
-	port       uint16
-	count      int
-	timeout    time.Duration
-	workers    int
-	output     string
-	autoOutput bool
+	port    uint16
+	count   int
+	timeout time.Duration
+	workers int
+	output  string
 }
 
 func addScanFlags(cmd *cobra.Command, opts *scanOptions, defaultPort uint16) {
@@ -29,18 +28,16 @@ func addScanFlags(cmd *cobra.Command, opts *scanOptions, defaultPort uint16) {
 	f.IntVarP(&opts.count, "count", "c", 4, "attempts per IP")
 	f.DurationVarP(&opts.timeout, "timeout", "W", 2*time.Second, "timeout per attempt")
 	f.IntVarP(&opts.workers, "workers", "w", 1024, "number of concurrent workers")
-	f.StringVarP(&opts.output, "output", "o", "", "save responsive hosts as CSV to this file")
-	f.BoolVarP(&opts.autoOutput, "auto-output", "O", false, "save responsive hosts as CSV to a file named after the target")
-	cmd.MarkFlagsMutuallyExclusive("output", "auto-output")
+	f.StringVarP(&opts.output, "output", "o", "", "CSV file for responsive hosts (default <target>-<protocol>.csv, use /dev/null to disable)")
 }
 
-// outputPath returns where to save the CSV, or "" for no file. Auto names get
-// a protocol suffix so a target file like ips.csv is never overwritten.
+// outputPath defaults to a name derived from the target. The protocol suffix
+// keeps a target file like ips.csv from being overwritten by its own results.
 func (o scanOptions) outputPath(targets *targetSet, proto string) string {
-	if o.autoOutput {
-		return targets.slug + "-" + proto + ".csv"
+	if o.output != "" {
+		return o.output
 	}
-	return o.output
+	return targets.slug + "-" + proto + ".csv"
 }
 
 // prober performs one attempt: dial is timed, verify (optional) runs on the
@@ -63,12 +60,9 @@ func (r hostResult) avg() time.Duration {
 }
 
 func runScan(ctx context.Context, out, errOut io.Writer, label string, targets *targetSet, opts scanOptions, p prober) error {
-	var sink *csvSink
-	if path := opts.outputPath(targets, p.proto); path != "" {
-		var err error
-		if sink, err = createCSV(path); err != nil {
-			return err
-		}
+	sink, err := createCSV(opts.outputPath(targets, p.proto))
+	if err != nil {
+		return err
 	}
 
 	start := time.Now()
@@ -109,22 +103,17 @@ func runScan(ctx context.Context, out, errOut io.Writer, label string, targets *
 		bar.Add(1)
 		if r.received > 0 {
 			bar.Describe(barDescription(stats.responded))
-			if sink != nil {
-				sink.write(r)
-			}
+			sink.write(r)
 		}
 	}
 	if !bar.IsFinished() {
 		bar.Exit()
 	}
 
-	saved := ""
-	if sink != nil {
-		if err := sink.close(); err != nil {
-			return fmt.Errorf("save %s: %w", sink.path, err)
-		}
-		saved = fmt.Sprintf("%s (%d hosts)", sink.path, sink.rows)
+	if err := sink.close(); err != nil {
+		return fmt.Errorf("save %s: %w", sink.path, err)
 	}
+	saved := fmt.Sprintf("%s (%d hosts)", sink.path, sink.rows)
 
 	if err := stats.write(out, label, time.Since(start), ctx.Err() != nil, saved); err != nil {
 		return err
