@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 )
 
@@ -26,6 +27,10 @@ type hostResult struct {
 	minRTT, maxRTT, total time.Duration
 }
 
+func (r hostResult) avg() time.Duration {
+	return r.total / time.Duration(r.received)
+}
+
 func newTCPCmd() *cobra.Command {
 	var opts tcpOptions
 
@@ -38,7 +43,7 @@ func newTCPCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runTCP(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), prefix, opts)
+			return runTCP(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], prefix, opts)
 		},
 	}
 
@@ -67,7 +72,10 @@ func parseTarget(s string) (netip.Prefix, error) {
 	return prefix.Masked(), nil
 }
 
-func runTCP(ctx context.Context, out, errOut io.Writer, prefix netip.Prefix, opts tcpOptions) error {
+func runTCP(ctx context.Context, out, errOut io.Writer, target string, prefix netip.Prefix, opts tcpOptions) error {
+	start := time.Now()
+	bar := newProgressBar(errOut, prefix)
+
 	addrs := make(chan netip.Addr)
 	go func() {
 		defer close(addrs)
@@ -94,26 +102,44 @@ func runTCP(ctx context.Context, out, errOut io.Writer, prefix netip.Prefix, opt
 		close(results)
 	}()
 
-	var probed, alive int
+	var stats scanStats
 	for r := range results {
 		if r.sent == 0 {
 			continue
 		}
-		probed++
-		if r.received == 0 {
-			continue
-		}
-		alive++
-		avg := r.total / time.Duration(r.received)
-		fmt.Fprintf(out, "%-15s %d/%d  min/avg/max = %s/%s/%s\n",
-			r.addr, r.received, r.sent, formatRTT(r.minRTT), formatRTT(avg), formatRTT(r.maxRTT))
+		stats.add(r)
+		bar.Add(1)
+	}
+	if !bar.IsFinished() {
+		bar.Exit()
 	}
 
-	fmt.Fprintf(errOut, "\n%d/%d hosts responded on port %d\n", alive, probed, opts.port)
-	if alive == 0 {
+	if err := stats.write(out, target, opts.port, time.Since(start), ctx.Err() != nil); err != nil {
+		return err
+	}
+	if stats.responded == 0 {
 		return fmt.Errorf("no hosts responded in %s", prefix)
 	}
 	return nil
+}
+
+func newProgressBar(w io.Writer, prefix netip.Prefix) *progressbar.ProgressBar {
+	total := int64(-1)
+	if hostBits := prefix.Addr().BitLen() - prefix.Bits(); hostBits < 63 {
+		total = 1 << hostBits
+	}
+	return progressbar.NewOptions64(total,
+		progressbar.OptionSetWriter(w),
+		progressbar.OptionSetDescription("scanning"),
+		progressbar.OptionSetItsString("hosts"),
+		progressbar.OptionShowCount(),
+		progressbar.OptionShowIts(),
+		progressbar.OptionFullWidth(),
+		progressbar.OptionThrottle(65*time.Millisecond),
+		progressbar.OptionSpinnerType(14),
+		progressbar.OptionSetRenderBlankState(true),
+		progressbar.OptionOnCompletion(func() { fmt.Fprintln(w) }),
+	)
 }
 
 func probeTCP(ctx context.Context, addr netip.Addr, opts tcpOptions) hostResult {
@@ -144,8 +170,4 @@ func probeTCP(ctx context.Context, addr netip.Addr, opts tcpOptions) hostResult 
 		r.maxRTT = max(r.maxRTT, rtt)
 	}
 	return r
-}
-
-func formatRTT(d time.Duration) string {
-	return fmt.Sprintf("%.3fms", float64(d.Microseconds())/1000)
 }
