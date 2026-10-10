@@ -17,9 +17,10 @@ func newTLSCmd() *cobra.Command {
 	var insecure bool
 
 	cmd := &cobra.Command{
-		Use:   "tls <cidr>",
-		Short: "Measure TCP connect plus TLS handshake time to every IP in a CIDR range",
-		Long: `Measure TCP connect plus TLS handshake time to every IP in a CIDR range.
+		Use:   "tls <cidr|file>",
+		Short: "Measure TCP connect plus TLS handshake time to every IP in a CIDR range or a file of ranges",
+		Long: `Measure TCP connect plus TLS handshake time to every IP in a CIDR range
+or a file of ranges (one CIDR or IP per line).
 
 Without --sni, the target IP is used as the server name, so no SNI is sent
 (IP literals are not allowed in SNI) and the certificate is not verified.
@@ -27,7 +28,7 @@ With --sni, the certificate must be valid for that name unless --insecure is set
 Verification runs after the handshake and is not included in the RTT.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			prefix, err := parseTarget(args[0])
+			targets, err := loadTargets(args[0])
 			if err != nil {
 				return err
 			}
@@ -45,7 +46,7 @@ Verification runs after the handshake and is not included in the RTT.`,
 				return dialer.DialContext(ctx, "tcp", addr.String())
 			}}
 
-			label := fmt.Sprintf("tls %s port %d, no SNI, unverified", prefix, opts.port)
+			label := fmt.Sprintf("tls %s port %d, no SNI, unverified", targets.name, opts.port)
 			if sni != "" {
 				status := "verified"
 				if insecure {
@@ -53,10 +54,10 @@ Verification runs after the handshake and is not included in the RTT.`,
 				} else {
 					p.verify = func(conn net.Conn) error { return verifyCert(conn.(*tls.Conn), sni) }
 				}
-				label = fmt.Sprintf("tls %s port %d, SNI %s, %s", prefix, opts.port, sni, status)
+				label = fmt.Sprintf("tls %s port %d, SNI %s, %s", targets.name, opts.port, sni, status)
 			}
 
-			return runScan(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), label, prefix, opts, p)
+			return runScan(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), label, targets, opts, p)
 		},
 	}
 	addScanFlags(cmd.Flags(), &opts, 443)

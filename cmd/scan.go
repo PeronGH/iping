@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/netip"
 	"sync"
@@ -45,30 +46,14 @@ func (r hostResult) avg() time.Duration {
 	return r.total / time.Duration(r.received)
 }
 
-// parseTarget accepts a CIDR or a single IP, treated as a full-length prefix.
-func parseTarget(s string) (netip.Prefix, error) {
-	prefix, err := netip.ParsePrefix(s)
-	if err != nil {
-		addr, addrErr := netip.ParseAddr(s)
-		if addrErr != nil {
-			return netip.Prefix{}, fmt.Errorf("invalid target %q: expected CIDR or IP", s)
-		}
-		prefix = netip.PrefixFrom(addr, addr.BitLen())
-	}
-	if prefix.Addr().BitLen()-prefix.Bits() > 64 {
-		return netip.Prefix{}, fmt.Errorf("target %s is too large: at most 64 host bits are supported", s)
-	}
-	return prefix.Masked(), nil
-}
-
-func runScan(ctx context.Context, out, errOut io.Writer, label string, prefix netip.Prefix, opts scanOptions, p prober) error {
+func runScan(ctx context.Context, out, errOut io.Writer, label string, targets *targetSet, opts scanOptions, p prober) error {
 	start := time.Now()
-	bar := newProgressBar(errOut, prefix)
+	bar := newProgressBar(errOut, targets.size)
 
 	addrs := make(chan netip.Addr)
 	go func() {
 		defer close(addrs)
-		for addr := range shuffledAddrs(prefix) {
+		for addr := range shuffledAddrs(targets) {
 			select {
 			case addrs <- addr:
 			case <-ctx.Done():
@@ -107,15 +92,15 @@ func runScan(ctx context.Context, out, errOut io.Writer, label string, prefix ne
 		return err
 	}
 	if stats.responded == 0 {
-		return fmt.Errorf("no hosts responded in %s", prefix)
+		return fmt.Errorf("no hosts responded in %s", targets.name)
 	}
 	return nil
 }
 
-func newProgressBar(w io.Writer, prefix netip.Prefix) *progressbar.ProgressBar {
+func newProgressBar(w io.Writer, size uint64) *progressbar.ProgressBar {
 	total := int64(-1)
-	if hostBits := prefix.Addr().BitLen() - prefix.Bits(); hostBits < 63 {
-		total = 1 << hostBits
+	if size <= math.MaxInt64 {
+		total = int64(size)
 	}
 	return progressbar.NewOptions64(total,
 		progressbar.OptionSetWriter(w),

@@ -7,6 +7,7 @@ require (
 	github.com/schollz/progressbar/v3 v3.19.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
+	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb
 )
 
 require (
