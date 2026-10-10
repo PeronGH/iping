@@ -6,6 +6,7 @@ import (
 	"math/bits"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -16,6 +17,7 @@ import (
 // range [0, size) so it can be shuffled as a whole.
 type targetSet struct {
 	name     string
+	slug     string // filesystem-safe base name for derived output files
 	prefixes []netip.Prefix
 	offsets  []uint64 // offsets[i] is the index of prefixes[i]'s first address
 	size     uint64
@@ -24,7 +26,12 @@ type targetSet struct {
 // loadTargets parses arg as a CIDR or IP, falling back to a file with one per line.
 func loadTargets(arg string) (*targetSet, error) {
 	if prefix, err := parsePrefix(arg); err == nil {
-		return newTargetSet(arg, []netip.Prefix{prefix})
+		set, err := newTargetSet(arg, []netip.Prefix{prefix})
+		if err != nil {
+			return nil, err
+		}
+		set.slug = strings.NewReplacer("/", "_", ":", "-").Replace(arg)
+		return set, nil
 	}
 
 	f, err := os.Open(arg)
@@ -62,6 +69,7 @@ func loadTargets(arg string) (*targetSet, error) {
 		unit = "range"
 	}
 	set.name = fmt.Sprintf("%s (%d %s)", arg, len(set.prefixes), unit)
+	set.slug = strings.TrimSuffix(filepath.Base(arg), filepath.Ext(arg))
 	return set, nil
 }
 

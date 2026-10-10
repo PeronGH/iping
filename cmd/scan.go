@@ -11,26 +11,42 @@ import (
 	"time"
 
 	"github.com/schollz/progressbar/v3"
-	"github.com/spf13/pflag"
+	"github.com/spf13/cobra"
 )
 
 type scanOptions struct {
-	port    uint16
-	count   int
-	timeout time.Duration
-	workers int
+	port       uint16
+	count      int
+	timeout    time.Duration
+	workers    int
+	output     string
+	autoOutput bool
 }
 
-func addScanFlags(f *pflag.FlagSet, opts *scanOptions, defaultPort uint16) {
+func addScanFlags(cmd *cobra.Command, opts *scanOptions, defaultPort uint16) {
+	f := cmd.Flags()
 	f.Uint16VarP(&opts.port, "port", "p", defaultPort, "port to connect to")
 	f.IntVarP(&opts.count, "count", "c", 4, "attempts per IP")
 	f.DurationVarP(&opts.timeout, "timeout", "W", 2*time.Second, "timeout per attempt")
 	f.IntVarP(&opts.workers, "workers", "w", 1024, "number of concurrent workers")
+	f.StringVarP(&opts.output, "output", "o", "", "save responsive hosts as CSV to this file")
+	f.BoolVarP(&opts.autoOutput, "auto-output", "O", false, "save responsive hosts as CSV to a file named after the target")
+	cmd.MarkFlagsMutuallyExclusive("output", "auto-output")
+}
+
+// outputPath returns where to save the CSV, or "" for no file. Auto names get
+// a protocol suffix so a target file like ips.csv is never overwritten.
+func (o scanOptions) outputPath(targets *targetSet, proto string) string {
+	if o.autoOutput {
+		return targets.slug + "-" + proto + ".csv"
+	}
+	return o.output
 }
 
 // prober performs one attempt: dial is timed, verify (optional) runs on the
 // connection afterwards so its cost doesn't skew the RTT.
 type prober struct {
+	proto  string
 	dial   func(ctx context.Context, addr netip.AddrPort) (net.Conn, error)
 	verify func(conn net.Conn) error
 }
@@ -47,6 +63,14 @@ func (r hostResult) avg() time.Duration {
 }
 
 func runScan(ctx context.Context, out, errOut io.Writer, label string, targets *targetSet, opts scanOptions, p prober) error {
+	var sink *csvSink
+	if path := opts.outputPath(targets, p.proto); path != "" {
+		var err error
+		if sink, err = createCSV(path); err != nil {
+			return err
+		}
+	}
+
 	start := time.Now()
 	bar := newProgressBar(errOut, targets.size)
 
@@ -85,13 +109,24 @@ func runScan(ctx context.Context, out, errOut io.Writer, label string, targets *
 		bar.Add(1)
 		if r.received > 0 {
 			bar.Describe(barDescription(stats.responded))
+			if sink != nil {
+				sink.write(r)
+			}
 		}
 	}
 	if !bar.IsFinished() {
 		bar.Exit()
 	}
 
-	if err := stats.write(out, label, time.Since(start), ctx.Err() != nil); err != nil {
+	saved := ""
+	if sink != nil {
+		if err := sink.close(); err != nil {
+			return fmt.Errorf("save %s: %w", sink.path, err)
+		}
+		saved = fmt.Sprintf("%s (%d hosts)", sink.path, sink.rows)
+	}
+
+	if err := stats.write(out, label, time.Since(start), ctx.Err() != nil, saved); err != nil {
 		return err
 	}
 	if stats.responded == 0 {

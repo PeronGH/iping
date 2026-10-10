@@ -33,7 +33,7 @@ Verification runs after the handshake and is not included in the RTT.`,
 				return err
 			}
 
-			p := prober{dial: func(ctx context.Context, addr netip.AddrPort) (net.Conn, error) {
+			p := prober{proto: "tls", dial: func(ctx context.Context, addr netip.AddrPort) (net.Conn, error) {
 				serverName := sni
 				if serverName == "" {
 					serverName = addr.Addr().String()
@@ -60,7 +60,7 @@ Verification runs after the handshake and is not included in the RTT.`,
 			return runScan(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), label, targets, opts, p)
 		},
 	}
-	addScanFlags(cmd.Flags(), &opts, 443)
+	addScanFlags(cmd, &opts, 443)
 	cmd.Flags().StringVar(&sni, "sni", "", "server name for the TLS handshake (default: the target IP, sent as no SNI)")
 	cmd.Flags().BoolVarP(&insecure, "insecure", "k", false, "skip certificate verification when --sni is set")
 
