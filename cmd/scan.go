@@ -83,6 +83,9 @@ func runScan(ctx context.Context, out, errOut io.Writer, label string, targets *
 		}
 		stats.add(r)
 		bar.Add(1)
+		if r.received > 0 {
+			bar.Describe(barDescription(stats.responded))
+		}
 	}
 	if !bar.IsFinished() {
 		bar.Exit()
@@ -97,6 +100,10 @@ func runScan(ctx context.Context, out, errOut io.Writer, label string, targets *
 	return nil
 }
 
+func barDescription(responsive int) string {
+	return fmt.Sprintf("scanning, %d responsive", responsive)
+}
+
 func newProgressBar(w io.Writer, size uint64) *progressbar.ProgressBar {
 	total := int64(-1)
 	if size <= math.MaxInt64 {
@@ -104,7 +111,7 @@ func newProgressBar(w io.Writer, size uint64) *progressbar.ProgressBar {
 	}
 	return progressbar.NewOptions64(total,
 		progressbar.OptionSetWriter(w),
-		progressbar.OptionSetDescription("scanning"),
+		progressbar.OptionSetDescription(barDescription(0)),
 		progressbar.OptionSetItsString("hosts"),
 		progressbar.OptionShowCount(),
 		progressbar.OptionShowIts(),
