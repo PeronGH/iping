@@ -22,8 +22,12 @@ func newTCPCmd() *cobra.Command {
 				return err
 			}
 			var dialer net.Dialer
-			p := prober{proto: "tcp", dial: func(ctx context.Context, addr netip.AddrPort) (net.Conn, error) {
-				return dialer.DialContext(ctx, "tcp", addr.String())
+			p := prober{proto: "tcp", dial: func(ctx context.Context, addr netip.AddrPort) (session, error) {
+				conn, err := dialer.DialContext(ctx, "tcp", addr.String())
+				if err != nil {
+					return session{}, err
+				}
+				return session{close: conn.Close}, nil
 			}}
 			label := fmt.Sprintf("tcp %s port %d", targets.name, opts.port)
 			return runScan(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), label, targets, opts, p)

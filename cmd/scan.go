@@ -2,9 +2,9 @@ package cmd
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"io"
-	"net"
 	"net/netip"
 	"sync"
 	"time"
@@ -39,11 +39,17 @@ func (o scanOptions) outputPath(targets *targetSet, proto string) string {
 }
 
 // prober performs one attempt: dial is timed, verify (optional) runs on the
-// connection afterwards so its cost doesn't skew the RTT.
+// peer certificates afterwards so its cost doesn't skew the RTT.
 type prober struct {
 	proto  string
-	dial   func(ctx context.Context, addr netip.AddrPort) (net.Conn, error)
-	verify func(conn net.Conn) error
+	dial   func(ctx context.Context, addr netip.AddrPort) (session, error)
+	verify func(peerCerts []*x509.Certificate) error
+}
+
+// session is an established connection; peerCerts is empty for plain TCP.
+type session struct {
+	close     func() error
+	peerCerts []*x509.Certificate
 }
 
 type hostResult struct {
@@ -126,15 +132,15 @@ func probeHost(ctx context.Context, addr netip.Addr, opts scanOptions, p prober)
 	for range opts.count {
 		attemptCtx, cancel := context.WithTimeout(ctx, opts.timeout)
 		start := time.Now()
-		conn, err := p.dial(attemptCtx, target)
+		sess, err := p.dial(attemptCtx, target)
 		rtt := time.Since(start)
 		cancel()
 		var verifyErr error
 		if err == nil {
 			if p.verify != nil {
-				verifyErr = p.verify(conn)
+				verifyErr = p.verify(sess.peerCerts)
 			}
-			conn.Close()
+			sess.close()
 		}
 		if ctx.Err() != nil {
 			break
