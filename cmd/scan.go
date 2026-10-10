@@ -4,13 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"net/netip"
 	"sync"
 	"time"
 
-	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 )
 
@@ -100,15 +98,12 @@ func runScan(ctx context.Context, out, errOut io.Writer, label string, targets *
 			continue
 		}
 		stats.add(r)
-		bar.Add(1)
+		bar.add(r.received > 0)
 		if r.received > 0 {
-			bar.Describe(barDescription(stats.responded))
 			sink.write(r)
 		}
 	}
-	if !bar.IsFinished() {
-		bar.Exit()
-	}
+	bar.finish()
 
 	if err := sink.close(); err != nil {
 		return fmt.Errorf("save %s: %w", sink.path, err)
@@ -122,29 +117,6 @@ func runScan(ctx context.Context, out, errOut io.Writer, label string, targets *
 		return fmt.Errorf("no hosts responded in %s", targets.name)
 	}
 	return nil
-}
-
-func barDescription(responsive int) string {
-	return fmt.Sprintf("scanning, %d responsive", responsive)
-}
-
-func newProgressBar(w io.Writer, size uint64) *progressbar.ProgressBar {
-	total := int64(-1)
-	if size <= math.MaxInt64 {
-		total = int64(size)
-	}
-	return progressbar.NewOptions64(total,
-		progressbar.OptionSetWriter(w),
-		progressbar.OptionSetDescription(barDescription(0)),
-		progressbar.OptionSetItsString("hosts"),
-		progressbar.OptionShowCount(),
-		progressbar.OptionShowIts(),
-		progressbar.OptionFullWidth(),
-		progressbar.OptionThrottle(65*time.Millisecond),
-		progressbar.OptionSpinnerType(14),
-		progressbar.OptionSetRenderBlankState(true),
-		progressbar.OptionOnCompletion(func() { fmt.Fprintln(w) }),
-	)
 }
 
 func probeHost(ctx context.Context, addr netip.Addr, opts scanOptions, p prober) hostResult {
