@@ -17,6 +17,7 @@ const fastestCount = 10
 type scanStats struct {
 	probed, responded        int
 	sent, received           int
+	certErrors, certHosts    int
 	minRTT, maxRTT, totalRTT time.Duration
 	fastest                  []hostResult // sorted by min RTT, at most fastestCount
 }
@@ -25,6 +26,10 @@ func (s *scanStats) add(r hostResult) {
 	s.probed++
 	s.sent += r.sent
 	s.received += r.received
+	if r.certErrors > 0 {
+		s.certErrors += r.certErrors
+		s.certHosts++
+	}
 	if r.received == 0 {
 		return
 	}
@@ -90,6 +95,9 @@ func (s *scanStats) write(w io.Writer, label string, elapsed time.Duration, inte
 		Row("Target", label).
 		Row("Hosts", fmt.Sprintf("%d probed, %d responded (%s)", s.probed, s.responded, percent(s.responded, s.probed))).
 		Row("Attempts", fmt.Sprintf("%d sent, %d succeeded (%s loss)", s.sent, s.received, percent(s.sent-s.received, s.sent)))
+	if s.certErrors > 0 {
+		summary.Row("Cert errors", fmt.Sprintf("%d attempts on %d hosts", s.certErrors, s.certHosts))
+	}
 	if s.received > 0 {
 		avg := s.totalRTT / time.Duration(s.received)
 		summary.Row("RTT", fmt.Sprintf("min/avg/max = %s/%s/%s", formatRTT(s.minRTT), formatRTT(avg), formatRTT(s.maxRTT)))

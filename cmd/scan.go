@@ -27,12 +27,17 @@ func addScanFlags(f *pflag.FlagSet, opts *scanOptions, defaultPort uint16) {
 	f.IntVarP(&opts.workers, "workers", "w", 1024, "number of concurrent workers")
 }
 
-// dialFunc performs one timed attempt; a nil error counts as a success.
-type dialFunc func(ctx context.Context, addr netip.AddrPort) (net.Conn, error)
+// prober performs one attempt: dial is timed, verify (optional) runs on the
+// connection afterwards so its cost doesn't skew the RTT.
+type prober struct {
+	dial   func(ctx context.Context, addr netip.AddrPort) (net.Conn, error)
+	verify func(conn net.Conn) error
+}
 
 type hostResult struct {
 	addr                  netip.Addr
 	sent, received        int
+	certErrors            int
 	minRTT, maxRTT, total time.Duration
 }
 
@@ -56,7 +61,7 @@ func parseTarget(s string) (netip.Prefix, error) {
 	return prefix.Masked(), nil
 }
 
-func runScan(ctx context.Context, out, errOut io.Writer, label string, prefix netip.Prefix, opts scanOptions, dial dialFunc) error {
+func runScan(ctx context.Context, out, errOut io.Writer, label string, prefix netip.Prefix, opts scanOptions, p prober) error {
 	start := time.Now()
 	bar := newProgressBar(errOut, prefix)
 
@@ -77,7 +82,7 @@ func runScan(ctx context.Context, out, errOut io.Writer, label string, prefix ne
 	for range opts.workers {
 		wg.Go(func() {
 			for addr := range addrs {
-				results <- probeHost(ctx, addr, opts, dial)
+				results <- probeHost(ctx, addr, opts, p)
 			}
 		})
 	}
@@ -126,17 +131,21 @@ func newProgressBar(w io.Writer, prefix netip.Prefix) *progressbar.ProgressBar {
 	)
 }
 
-func probeHost(ctx context.Context, addr netip.Addr, opts scanOptions, dial dialFunc) hostResult {
+func probeHost(ctx context.Context, addr netip.Addr, opts scanOptions, p prober) hostResult {
 	r := hostResult{addr: addr}
 	target := netip.AddrPortFrom(addr, opts.port)
 
 	for range opts.count {
 		attemptCtx, cancel := context.WithTimeout(ctx, opts.timeout)
 		start := time.Now()
-		conn, err := dial(attemptCtx, target)
+		conn, err := p.dial(attemptCtx, target)
 		rtt := time.Since(start)
 		cancel()
+		var verifyErr error
 		if err == nil {
+			if p.verify != nil {
+				verifyErr = p.verify(conn)
+			}
 			conn.Close()
 		}
 		if ctx.Err() != nil {
@@ -144,6 +153,10 @@ func probeHost(ctx context.Context, addr netip.Addr, opts scanOptions, dial dial
 		}
 		r.sent++
 		if err != nil {
+			continue
+		}
+		if verifyErr != nil {
+			r.certErrors++
 			continue
 		}
 
