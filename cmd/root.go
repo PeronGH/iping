@@ -8,6 +8,6 @@ func NewRootCmd() *cobra.Command {
 		Short:        "Ping hosts using various protocols",
 		SilenceUsage: true,
 	}
-	root.AddCommand(newTCPCmd())
+	root.AddCommand(newTCPCmd(), newTLSCmd())
 	return root
 }

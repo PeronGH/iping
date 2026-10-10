@@ -18,7 +18,7 @@ type scanStats struct {
 	probed, responded        int
 	sent, received           int
 	minRTT, maxRTT, totalRTT time.Duration
-	fastest                  []hostResult // sorted by average RTT, at most fastestCount
+	fastest                  []hostResult // sorted by min RTT, at most fastestCount
 }
 
 func (s *scanStats) add(r hostResult) {
@@ -36,8 +36,8 @@ func (s *scanStats) add(r hostResult) {
 	s.maxRTT = max(s.maxRTT, r.maxRTT)
 	s.totalRTT += r.total
 
-	i, _ := slices.BinarySearchFunc(s.fastest, r.avg(), func(h hostResult, avg time.Duration) int {
-		return cmp.Compare(h.avg(), avg)
+	i, _ := slices.BinarySearchFunc(s.fastest, r.minRTT, func(h hostResult, minRTT time.Duration) int {
+		return cmp.Compare(h.minRTT, minRTT)
 	})
 	if i < fastestCount {
 		s.fastest = slices.Insert(s.fastest, i, r)[:min(len(s.fastest)+1, fastestCount)]
@@ -54,7 +54,7 @@ func newTable() *table.Table {
 	return table.New().Border(lipgloss.RoundedBorder()).BorderStyle(borderStyle)
 }
 
-func (s *scanStats) write(w io.Writer, target string, port uint16, elapsed time.Duration, interrupted bool) error {
+func (s *scanStats) write(w io.Writer, label string, elapsed time.Duration, interrupted bool) error {
 	if len(s.fastest) > 0 {
 		fastest := newTable().
 			Headers("#", "IP", "RECV", "LOSS", "MIN", "AVG", "MAX").
@@ -75,7 +75,7 @@ func (s *scanStats) write(w io.Writer, target string, port uint16, elapsed time.
 				formatRTT(r.minRTT), formatRTT(r.avg()), formatRTT(r.maxRTT),
 			)
 		}
-		if _, err := lipgloss.Fprintf(w, "Fastest %d of %d responding hosts\n%s\n", len(s.fastest), s.responded, fastest); err != nil {
+		if _, err := lipgloss.Fprintf(w, "Fastest %d of %d responding hosts (by min RTT)\n%s\n", len(s.fastest), s.responded, fastest); err != nil {
 			return err
 		}
 	}
@@ -87,7 +87,7 @@ func (s *scanStats) write(w io.Writer, target string, port uint16, elapsed time.
 			}
 			return cellStyle
 		}).
-		Row("Target", fmt.Sprintf("%s port %d", target, port)).
+		Row("Target", label).
 		Row("Hosts", fmt.Sprintf("%d probed, %d responded (%s)", s.probed, s.responded, percent(s.responded, s.probed))).
 		Row("Attempts", fmt.Sprintf("%d sent, %d succeeded (%s loss)", s.sent, s.received, percent(s.sent-s.received, s.sent)))
 	if s.received > 0 {
